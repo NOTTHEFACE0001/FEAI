@@ -2,13 +2,16 @@
 Bot de Discord — Carpetas de Asuntos Internos
 Un solo archivo: comandos, modal, almacenamiento y arranque del bot.
 
-Requiere: Python 3.10+  (ver requirements.txt para las librerías)
+Requiere: Python 3.10+ (ver requirements.txt para las librerías)
 """
 
 import os
 import json
+import asyncio
 from typing import Optional, Literal
 from datetime import datetime, timezone
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
 import discord
 from discord import app_commands
@@ -18,10 +21,32 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")  # opcional: si se define, los comandos se sincronizan al instante solo en ese servidor
+PORT = int(os.getenv("PORT", 8080))  # Puerto expuesto para servicios de hosting como Render
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 CARPETAS_PATH = os.path.join(DATA_DIR, "carpetas.json")
+
+
+# ============================================================
+#  SERVIDOR HTTP PARA HEALTH CHECK (Render / Hosting)
+# ============================================================
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK - Bot de Discord activo")
+
+    def log_message(self, format, *args):
+        # Silenciar logs HTTP repetitivos en la consola
+        return
+
+def iniciar_servidor_http(puerto: int):
+    server = HTTPServer(("0.0.0.0", puerto), HealthCheckHandler)
+    print(f"🌐 Servidor web de health-check iniciado en el puerto {puerto}")
+    server.serve_forever()
 
 
 # ============================================================
@@ -193,7 +218,6 @@ class ModalAbrirCarpeta(discord.ui.Modal):
             style=discord.TextStyle.short, required=True, max_length=20, default=fecha_sugerida
         )
 
-        # discord.ui.Label envuelve cada campo con su etiqueta (patrón actual de discord.py 2.6+)
         self.add_item(discord.ui.Label(text="Motivo de la carpeta", component=self.motivo))
         self.add_item(discord.ui.Label(text="Autorizó (nombre / cargo)", component=self.autorizado_por))
         self.add_item(discord.ui.Label(text="Agente", component=self.agente))
@@ -503,4 +527,8 @@ async def config_ver(interaction: discord.Interaction):
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("❌ Falta DISCORD_TOKEN en el archivo .env")
+    
+    # Iniciar servidor HTTP en un hilo secundario para cumplir con el Health Check de Render
+    threading.Thread(target=iniciar_servidor_http, args=(PORT,), daemon=True).start()
+    
     client.run(TOKEN)
